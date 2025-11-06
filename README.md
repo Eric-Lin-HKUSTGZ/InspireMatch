@@ -70,7 +70,7 @@ InspireMatch/
   "coping_strategy": "应对策略",
   "final_result": "最终结果",
   "tags": ["标签1", "标签2"],
-  "embedding": [0.123, 0.456, ...],
+  "embedding": [0.123, 0.456, ...],  // 1024维向量
   "chunk_id": "Jack Ma_0",
   "full_text": "完整文本内容"
 }
@@ -93,6 +93,13 @@ export OPENROUTER_API_KEY=your_openrouter_api_key_here
 export ELASTICSEARCH_HOST=localhost
 export ELASTICSEARCH_PORT=9200
 export ELASTICSEARCH_INDEX=celebrity_experiences
+
+# Embedding模型配置
+如果使用自定义embedding API端点，设置以下变量：
+export EMBEDDING_API_BASE_URL=https://your-api-endpoint.com/v1
+export EMBEDDING_API_KEY=your_api_key
+export EMBEDDING_MODEL=your_model_name  # 例如: Qwen/Qwen3-Embedding-0.6B
+默认使用OpenRouter的openai/text-embedding-3-small模型，只需设置OPENROUTER_API_KEY即可
 ```
 
 ### 3. 启动 ElasticSearch
@@ -109,49 +116,21 @@ curl http://localhost:9200
 
 **注意**: ElasticSearch 数据将存储在 `/home/linweiquan/elasticresearch/data` 目录中。
 
-### 停止 ElasticSearch 服务
-
+**常用命令**：
 ```bash
-# 停止服务（保持容器和数据）
-docker-compose stop
-
-# 停止并删除容器（数据会保留在卷中）
-docker-compose down
-
-```
-
-**说明**：
-- `docker-compose stop`: 停止容器但保留容器和数据，适合临时停止服务
-- `docker-compose down`: 停止并删除容器，但保留数据卷，适合需要清理容器时使用
-
-### 检查 Docker 容器状态
-
-```bash
-# 使用 docker-compose 查看服务状态（推荐）
+# 查看服务状态
 docker-compose ps
 
-# 查看运行中的容器
-docker ps
-
-# 查看所有容器（包括停止的）
-docker ps -a
-
-# 查看容器日志
+# 查看日志
 docker logs inspirematch_elasticsearch
 
-# 实时查看容器日志
-docker logs -f inspirematch_elasticsearch
+# 停止服务
+docker-compose stop    # 停止但保留容器和数据
+docker-compose down    # 停止并删除容器（数据保留在卷中）
 
-# 查看容器详细信息
-docker inspect inspirematch_elasticsearch
+# 重启服务
+docker-compose restart
 ```
-
-**说明**：
-- `docker-compose ps`: 使用 docker-compose 查看服务状态，显示容器名称、状态、端口等信息
-- `docker ps`: 只显示运行中的容器
-- `docker ps -a`: 显示所有容器，包括已停止的
-- `docker logs`: 查看容器日志，用于排查问题
-- `docker inspect`: 查看容器的详细配置信息
 
 ### 4. 构建向量数据库
 
@@ -193,7 +172,10 @@ python vector_search_example.py "创业" --keyword --size 5
 
 - **搜索**: sonar-pro-search (via OpenRouter)
 - **数据提取**: GPT-4o-mini (via OpenRouter)
-- **向量嵌入**: text-embedding-3-small (1536维)
+- **向量嵌入**: 支持多种模型（可通过环境变量配置）
+  - 默认（OpenRouter）: openai/text-embedding-3-small (1024维)
+  - 自定义端点: Qwen/Qwen3-Embedding-0.6B (1024维)
+  - 可通过 `EMBEDDING_MODEL` 环境变量自定义模型
 - **向量数据库**: ElasticSearch 8.x
 - **文本处理**: tiktoken
 
@@ -252,145 +234,61 @@ results = search_experiences(
 )
 ```
 
-## 故障排除
-
-### ElasticSearch 连接失败
-
-```bash
-# 检查容器状态
-docker ps
-
-# 查看日志
-docker logs inspirematch_elasticsearch
-
-# 重启容器
-docker-compose restart
-```
-
-### API 调用失败
-
-检查环境变量是否正确设置：
-```bash
-echo $OPENROUTER_API_KEY
-```
-
-### 索引问题
-
-删除并重建索引：
-```python
-from vector_db_builder.elasticsearch_setup import ElasticsearchSetup
-es = ElasticsearchSetup()
-es.es.indices.delete(index="celebrity_experiences", ignore=[404])
-es.create_index("celebrity_experiences")
-```
-
 ## 更新数据
 
-### 更新人名
+### 更新人名和标签
 
-人名数据存储在 `data_construct/celebrity_deeds/` 目录下，按职业分类：
-
-```
-data_construct/celebrity_deeds/
-├── entrepreneurs.txt          # 企业家
-├── politicians.txt            # 政治家
-├── scientists.txt             # 科学家
-├── artists.txt                # 艺术家
-├── athletes.txt               # 运动员
-├── actors_entertainers.txt    # 演员与娱乐圈人物
-├── writers_philosophers.txt   # 作家与哲学家
-├── activists.txt              # 社会活动家
-└── educators.txt              # 教育工作者
-```
+**数据位置**：
+- 人名：`data_construct/celebrity_deeds/` 目录下，按职业分类（9个文件）
+- 标签：`data_construct/flags/` 目录下，按标签类型分类（10个文件）
 
 **格式要求**：
-- 每行一个名人，格式：`英文名--中文名`
-- 例如：`Jack Ma--马云`
-- 注意使用 `--`（两个短横线）分隔英文名和中文名
+- 每行一个条目，格式：`英文--中文`
+- 例如：`Jack Ma--马云` 或 `Entrepreneurial Challenges--创业困难`
+- **重要**：必须使用 `--`（两个短横线）分隔，格式错误会导致解析失败
 
 **更新步骤**：
-1. 编辑对应职业的 `.txt` 文件，添加、修改或删除人名
-2. 保存文件
-3. 重新构建数据库（见下文）
-
-### 更新标签
-
-标签数据存储在 `data_construct/flags/` 目录下，按标签类型分类：
-
-```
-data_construct/flags/
-├── career_development_and_challenges.txt          # 职业发展与事业挑战
-├── mental_health_emotional_challenges.txt         # 心理健康与情感困境
-├── personal_growth_and_self-improvement.txt       # 个人成长与自我提升
-├── relationships_interpersonal_communication.txt  # 关系与人际交往
-├── financial_life_challenges.txt                  # 财务与生活困境
-├── physical_health_fitness.txt                    # 身体健康与运动
-├── enterpreneurship_and_innovation.txt            # 创业与创新
-├── education_and_learning.txt                     # 教育与学习
-├── social_responsibility_and_impact.txt           # 社会责任与影响力
-└── resilience_and_comebacks.txt                   # 失败与恢复
-```
-
-**格式要求**：
-- 每行一个标签，格式：`英文标签--中文标签`
-- 例如：`Entrepreneurial Mindset--创业心态`
-- 注意使用 `--`（两个短横线）分隔英文和中文标签
-
-**更新步骤**：
-1. 编辑对应标签类型的 `.txt` 文件，添加、修改或删除标签
+1. 编辑对应的 `.txt` 文件，添加、修改或删除条目
 2. 保存文件
 3. 重新构建数据库（见下文）
 
 ### 重新构建数据库
 
-更新人名或标签后，需要重新构建向量数据库。**重要**：由于构建流程的依赖关系，不同的更新场景需要执行不同的步骤。
+不同更新场景的推荐方法：
 
-#### 场景 1：添加新人名
+**场景 1：添加/修改/删除人名**
+- 需要完全重建（不能使用缓存）
+- 原因：新数据不在缓存中，且需要删除旧数据
 
-**流程说明**：
-- 搜索会重新读取所有名人列表（包括新增的），所以必须重新搜索
-- 新增名人的搜索结果需要提取结构化信息
-- 提取的经历需要匹配标签
-- 最终需要生成向量并索引
+**场景 2：添加/修改标签**
+- 可以使用缓存跳过搜索和提取
+- 只需重新匹配标签、向量化和索引
 
-**推荐方法：完全重建**
+**场景 3：删除标签**
+- 建议完全重建（确保数据一致性）
 
+**完全重建命令**：
 ```bash
 cd vector_db_builder
 
-# 1. 删除旧索引（会删除所有已索引的数据）
+# 删除旧索引和缓存
 python -c "
 from elasticsearch_setup import ElasticsearchSetup
 es = ElasticsearchSetup()
 es.es.indices.delete(index='celebrity_experiences', ignore=[404])
 print('索引已删除')
 "
-
-# 2. 删除缓存（确保使用最新的数据）
 rm -rf cache/*.json
 
-# 3. 完全重新构建（会搜索所有名人，包括新增的）
+# 完全重新构建
 python build_vector_database.py
 ```
 
-**原因**：不能使用任何跳过参数，因为：
-- 不能跳过搜索：新名人的搜索结果不存在于缓存中
-- 不能跳过提取：新名人的搜索结果需要提取结构化信息
-- 不能跳过标签匹配：新经历需要匹配标签
-- 不能跳过向量化：新数据需要生成向量
-
-#### 场景 2：修改/删除人名
-
-**流程说明**：
-- 需要删除旧数据，重新搜索所有名人
-- 必须完全重建以确保数据一致性
-
-**推荐方法：完全重建**
-
+**使用缓存重建（仅限场景2）**：
 ```bash
 cd vector_db_builder
 
-# 1. 删除旧索引
+# 删除旧索引
 python -c "
 from elasticsearch_setup import ElasticsearchSetup
 es = ElasticsearchSetup()
@@ -398,92 +296,18 @@ es.es.indices.delete(index='celebrity_experiences', ignore=[404])
 print('索引已删除')
 "
 
-# 2. 删除缓存
-rm -rf cache/*.json
-
-# 3. 完全重新构建
-python build_vector_database.py
-```
-
-#### 场景 3：添加/修改标签
-
-**流程说明**：
-- 经历数据没有变化，可以跳过搜索和提取
-- 需要重新匹配标签（使用新的标签列表）
-- 标签变化后需要重新生成向量（因为标签是索引的一部分）
-- 最后重新索引
-
-**推荐方法：使用缓存跳过搜索和提取**
-
-```bash
-cd vector_db_builder
-
-# 1. 删除旧索引
-python -c "
-from elasticsearch_setup import ElasticsearchSetup
-es = ElasticsearchSetup()
-es.es.indices.delete(index='celebrity_experiences', ignore=[404])
-print('索引已删除')
-"
-
-# 2. 从缓存加载已有的经历数据，重新匹配标签（使用新的标签列表），然后重新向量化和索引
+# 跳过搜索和提取，使用缓存数据
 python build_vector_database.py --skip-search --skip-extract
 ```
 
-**说明**：
-- `--skip-search`：跳过搜索步骤，使用缓存中的搜索结果
-- `--skip-extract`：跳过提取步骤，使用缓存中的结构化经历数据
-- 会重新执行标签匹配（使用新的标签列表）、向量化和索引
+**构建流程说明**：
+1. 搜索名人经历 (`--skip-search`)
+2. 提取结构化数据 (`--skip-extract`)
+3. 标签匹配 (`--skip-tags`)
+4. 文本切块和向量嵌入 (`--skip-processing`)
+5. 存储到ElasticSearch
 
-#### 场景 4：删除标签
-
-**流程说明**：
-- 删除标签可能影响已有经历的标签匹配结果
-- 为确保数据一致性，建议完全重建
-
-**推荐方法：完全重建**
-
-```bash
-cd vector_db_builder
-
-# 1. 删除旧索引
-python -c "
-from elasticsearch_setup import ElasticsearchSetup
-es = ElasticsearchSetup()
-es.es.indices.delete(index='celebrity_experiences', ignore=[404])
-print('索引已删除')
-"
-
-# 2. 删除缓存
-rm -rf cache/*.json
-
-# 3. 完全重新构建
-python build_vector_database.py
-```
-
-### 更新流程总结
-
-| 更新内容 | 需要重新执行的步骤 | 能否使用缓存 | 推荐命令 |
-|---------|------------------|------------|---------|
-| 添加新人名 | 搜索 → 提取 → 标签匹配 → 向量化 → 索引 | ❌ 不能（新数据不在缓存中） | 删除索引和缓存后运行 `python build_vector_database.py` |
-| 修改/删除人名 | 搜索 → 提取 → 标签匹配 → 向量化 → 索引 | ❌ 不能（需要删除旧数据） | 删除索引和缓存后运行 `python build_vector_database.py` |
-| 添加/修改标签 | 标签匹配 → 向量化 → 索引 | ✅ 可以（经历数据未变） | 删除索引后运行 `python build_vector_database.py --skip-search --skip-extract` |
-| 删除标签 | 搜索 → 提取 → 标签匹配 → 向量化 → 索引 | ❌ 建议不（确保一致性） | 删除索引和缓存后运行 `python build_vector_database.py` |
-
-### 构建步骤说明
-
-完整的构建流程包含5个步骤：
-
-1. **搜索名人经历** (`--skip-search`): 从文件读取所有名人，调用API搜索经历
-2. **提取结构化数据** (`--skip-extract`): 从搜索结果中提取结构化经历（事件摘要、挑战类型、应对策略、最终结果）
-3. **标签匹配** (`--skip-tags`): 为每条经历匹配标签（从标签列表中选择）
-4. **文本处理和向量嵌入** (`--skip-processing`): 将经历切块并生成向量嵌入
-5. **存储到ElasticSearch**: 将向量化的数据索引到ES
-
-**重要提示**：
-- 如果跳过了某个步骤，该步骤会从缓存中加载数据
-- 如果缓存中不存在需要的数据，构建会失败
-- 新增人名时，新名人的数据不存在于任何缓存中，因此不能跳过任何步骤
+**提示**：跳过步骤会从缓存加载数据，如果缓存不存在会失败。新增人名时不能跳过任何步骤。
 
 ### 验证更新
 
@@ -503,12 +327,12 @@ curl "http://localhost:9200/celebrity_experiences/_search?q=celebrity_name_cn:�
 
 ## 注意事项
 
-1. **API 限流**: 搜索和提取过程会调用 OpenRouter API，请注意 API 限流。代码中已添加延迟以避免过快请求。
-2. **ElasticSearch 内存**: 默认配置使用 512MB 内存，如果数据量大可能需要调整 `docker-compose.yml` 中的内存设置。
-3. **数据持久化**: ElasticSearch 数据存储在 `/home/linweiquan/elasticresearch/data`，删除容器前请确保数据已备份。
-4. **向量维度**: 使用 `text-embedding-3-small` 模型，向量维度为 1536。
-5. **数据格式**: 人名和标签文件必须使用 `--`（两个短横线）分隔英文和中文，格式错误会导致解析失败。
-6. **缓存管理**: 更新数据后建议清理缓存，确保使用最新的数据。
+1. **API 限流**: 搜索和提取过程会调用 OpenRouter API，代码中已添加延迟以避免过快请求。
+2. **ElasticSearch 内存**: 默认 512MB，数据量大时可能需要调整 `docker-compose.yml`。
+3. **数据持久化**: ElasticSearch 数据存储在 `/home/linweiquan/elasticresearch/data`，删除容器前请备份。
+4. **向量嵌入**: 默认使用 OpenRouter 的 `openai/text-embedding-3-small`（1024维），可通过环境变量配置（见环境变量配置部分）。
+5. **数据格式**: 人名和标签文件必须使用 `--`（两个短横线）分隔，格式错误会导致解析失败。
+6. **缓存管理**: 更新数据后建议清理缓存，确保使用最新数据。
 7. **索引重建**: 更新人名或大量标签后，建议删除旧索引并完全重建，确保数据一致性。
 
 ## 许可证
